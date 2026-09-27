@@ -1,8 +1,9 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
-<base target="_top">
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MisFinanzas</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600;700&display=swap');
 :root{
@@ -65,7 +66,7 @@ button{ font-family:inherit; }
 <div class="app">
   <div class="topbar">
     <h1>💰 MisFinanzas</h1>
-    <p id="syncStatus">📊 Cargando desde tu Google Sheet...</p>
+    <p id="syncStatus">📊 Guardado localmente en este dispositivo</p>
   </div>
 
   <div class="pages">
@@ -124,7 +125,8 @@ button{ font-family:inherit; }
 </div>
 
 <script>
-/* ============ DATOS EN MEMORIA (vienen de la Google Sheet) ============ */
+/* ============ DATOS (localStorage) ============ */
+const STORAGE_KEY = "misfinanzas_entries_v1";
 let entries = [];
 
 const TYPE_INFO = {
@@ -146,20 +148,27 @@ function totalsFor(list){
   t.ganancia = t.venta - t.compra;
   return t;
 }
+function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 
-/* ============ CARGA INICIAL DESDE LA SHEET ============ */
+/* ============ PERSISTENCIA ============ */
 function loadEntries(){
-  google.script.run
-    .withSuccessHandler(function(list){
-      entries = list || [];
-      document.getElementById("syncStatus").textContent = "📊 Guardado en tu Google Sheet";
-      renderHome();
-    })
-    .withFailureHandler(function(err){
-      document.getElementById("syncStatus").textContent = "⚠️ No se pudo leer la planilla";
-      console.error(err);
-    })
-    .listEntries();
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    entries = raw ? JSON.parse(raw) : [];
+    document.getElementById("syncStatus").textContent = "📊 Guardado localmente en este dispositivo";
+  } catch(err){
+    entries = [];
+    document.getElementById("syncStatus").textContent = "⚠️ No se pudo leer el almacenamiento local";
+    console.error(err);
+  }
+  renderHome();
+}
+function persist(){
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+  } catch(err){
+    console.error("No se pudo guardar en localStorage", err);
+  }
 }
 
 /* ============ RENDER: INICIO ============ */
@@ -194,37 +203,24 @@ function saveEntry(){
 
   if(!amount || amount <= 0){ alert("Ingresá un monto válido, mayor a 0."); return; }
 
-  const data = { type: addType, desc: desc, amount: amount, date: date };
-  const btn = document.getElementById("saveBtn");
-  btn.disabled = true; btn.textContent = "Guardando...";
+  const entry = { id: uid(), type: addType, desc, amount, date };
+  entries.push(entry);
+  persist();
 
-  google.script.run
-    .withSuccessHandler(function(id){
-      entries.push(Object.assign({ id: id }, data));
-      btn.disabled = false; btn.textContent = "Guardar";
-      const msg = document.getElementById("saveMsg");
-      msg.textContent = "Guardado ✓";
-      setTimeout(() => { msg.textContent = ""; }, 1800);
-      resetAddForm();
-      renderHome();
-    })
-    .withFailureHandler(function(err){
-      btn.disabled = false; btn.textContent = "Guardar";
-      alert("No se pudo guardar: " + err.message);
-    })
-    .addEntry(data);
+  const msg = document.getElementById("saveMsg");
+  msg.textContent = "Guardado ✓";
+  setTimeout(() => { msg.textContent = ""; }, 1800);
+
+  resetAddForm();
+  renderHome();
 }
 
 /* ============ HISTORIAL ============ */
 function deleteEntry(id){
   if(!confirm("¿Eliminar este movimiento?")) return;
-  google.script.run
-    .withSuccessHandler(function(){
-      entries = entries.filter(e => e.id !== id);
-      renderHistory(); renderHome(); renderMonths();
-    })
-    .withFailureHandler(function(err){ alert("No se pudo eliminar: " + err.message); })
-    .deleteEntry(id);
+  entries = entries.filter(e => e.id !== id);
+  persist();
+  renderHistory(); renderHome(); renderMonths();
 }
 
 function renderHistory(){
@@ -238,13 +234,14 @@ function renderHistory(){
     const info = TYPE_INFO[e.type];
     html += '<div class="hist-row">'
       + '<div class="hist-dot" style="background:' + info.color + '"></div>'
-      + '<div class="hist-info"><div class="hist-desc">' + e.desc + '</div>'
+      + '<div class="hist-info"><div class="hist-desc">' + escapeHtml(e.desc) + '</div>'
       + '<div class="hist-date">' + info.label + ' · ' + e.date + '</div></div>'
       + '<div class="hist-amount" style="color:' + info.color + '">' + info.sign + ' ' + money(e.amount) + '</div>'
       + '<button class="hist-del" onclick="deleteEntry(\'' + e.id + '\')">✕</button></div>';
   });
   wrap.innerHTML = html;
 }
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
 /* ============ MESES ============ */
 function renderMonths(){
